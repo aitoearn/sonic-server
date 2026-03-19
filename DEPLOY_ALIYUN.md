@@ -1,19 +1,20 @@
-# Sonic Server 阿里云部署指南
+# Sonic Server 云部署指南
 
-本文档介绍如何将 Sonic Server 部署到阿里云 ECS 服务器。
+本文档介绍如何将 Sonic Server 部署到云服务器（阿里云/腾讯云/华为云）。
 
 ## 前置准备
 
-### 1. 阿里云资源准备
+### 1. 云资源准备
 
-#### 方案 A：使用阿里云 RDS（推荐）
-1. 登录阿里云控制台
-2. 创建 RDS MySQL 实例（建议 5.7+ 版本）
+#### 方案 A：使用云数据库（推荐）
+**阿里云 RDS / 腾讯云 CDB / 华为云 RDS**
+1. 登录云控制台
+2. 创建 MySQL 实例（建议 5.7+ 版本）
 3. 创建数据库 `sonic`，字符集选择 `utf8mb4`
-4. 设置白名单，允许 ECS 内网访问
+4. 设置白名单，允许云服务器内网访问
 
 #### 方案 B：自建 MySQL
-在 ECS 上使用 Docker 运行 MySQL：
+在云服务器上使用 Docker 运行 MySQL：
 ```bash
 docker run -d \
   --name mysql \
@@ -23,30 +24,34 @@ docker run -d \
   mysql:8.0
 ```
 
-### 2. ECS 配置建议
+### 2. 云服务器配置建议
 - **系统**：Ubuntu 20.04/22.04 LTS 或 CentOS 7+
 - **CPU**：2 核及以上
 - **内存**：4GB 及以上（推荐 8GB）
 - **磁盘**：40GB+
 - **网络**：开放端口 3000、8761、3306（如自建 MySQL）
 
+**2 核 4G 配置**：可以正常运行所有服务，建议在本地运行 MySQL。
+
 ### 3. 配置安全组
-在阿里云控制台 - 安全组中添加入站规则：
+在云控制台 - 安全组中添加入站规则：
 | 端口范围 | 授权对象 | 描述 |
 |---------|---------|------|
 | 3000/3000 | 0.0.0.0/0 | Web 应用端口 |
 | 8761/8761 | 0.0.0.0/0 | Eureka 注册中心 |
 | 3306/3306 | 0.0.0.0/0（仅限自建 MySQL）| MySQL |
 
+**腾讯云安全组路径**：控制台 > 云服务器 > 网络安全 > 安全组
+
 ---
 
 ## 部署步骤
 
-### 步骤 1：上传部署脚本到 ECS
+### 步骤 1：上传部署脚本到云服务器
 
 ```bash
 # 方式 1：使用 scp 上传
-scp deploy-aliyun.sh root@<ECS_IP>:/root/
+scp deploy-aliyun.sh root@<服务器 IP>:/root/
 
 # 方式 2：使用 Git 克隆
 git clone https://github.com/aitoearn/sonic-server.git
@@ -63,6 +68,13 @@ chmod +x deploy-aliyun.sh
 sudo ./deploy-aliyun.sh
 ```
 
+脚本会自动：
+- 安装 Docker
+- 安装 Docker Compose
+- 创建部署目录
+- 生成配置文件
+- 拉取镜像并启动服务
+
 ### 步骤 3：配置环境变量
 
 编辑 `/opt/sonic-server/.env` 文件：
@@ -75,7 +87,7 @@ sudo vim /opt/sonic-server/.env
 
 ```ini
 # MySQL 配置
-MYSQL_HOST=<RDS 内网地址或 ECS 内网 IP>
+MYSQL_HOST=<云数据库内网地址或 172.17.0.1>
 MYSQL_PORT=3306
 MYSQL_DATABASE=sonic
 MYSQL_USERNAME=root
@@ -116,12 +128,24 @@ curl http://localhost:8761/eureka/apps
 
 部署完成后，通过浏览器访问：
 
-- **Web 界面**：`http://<ECS 公网 IP>:3000`
-- **Eureka 控制台**：`http://<ECS 公网 IP>:8761`
+- **Web 界面**：`http://<服务器公网 IP>:3000`
+- **Eureka 控制台**：`http://<服务器公网 IP>:8761`
 
 默认管理员账号：
 - 用户名：`admin`
 - 密码：`sonic`
+
+---
+
+## 腾讯云安全组配置
+
+1. 登录 [腾讯云控制台](https://console.cloud.tencent.com/)
+2. 进入 **云服务器 > 网络安全 > 安全组**
+3. 点击 **添加规则**
+4. 添加入站规则：
+   - 端口 3000，协议 TCP，源地址 0.0.0.0/0
+   - 端口 8761，协议 TCP，源地址 0.0.0.0/0
+   - 端口 3306，协议 TCP，源地址 0.0.0.0/0（如本地运行 MySQL）
 
 ---
 
@@ -196,6 +220,8 @@ docker exec -it sonic-server-controller ping <MYSQL_HOST>
 
 # 检查 MySQL 状态
 mysql -h <MYSQL_HOST> -u root -p
+
+# 腾讯云 CDB 需要在控制台设置白名单
 ```
 
 ### 3. 端口被占用
@@ -225,11 +251,11 @@ free -h
 在 `docker-compose.yml` 中为各服务添加 JVM 参数：
 ```yaml
 environment:
-  - JAVA_OPTS=-Xms512m -Xmx1024m
+  - JAVA_OPTS=-Xms256m -Xmx512m
 ```
 
-### 2. MySQL 优化
-- 使用阿里云 RDS（自动优化）
+### 2. 数据库优化
+- 使用云数据库（RDS/CDB）自动优化
 - 或调整 MySQL 配置参数
 
 ### 3. 日志轮转
@@ -251,15 +277,17 @@ environment:
 ## 高级部署（可选）
 
 ### 使用 HTTPS
-1. 申请 SSL 证书（阿里云免费证书）
+1. 申请 SSL 证书（云厂商提供免费证书）
 2. 配置 Nginx 反向代理
 3. 将 HTTP 重定向到 HTTPS
 
-### 使用 SLB 负载均衡
-适用于多实例部署场景，配置 SLB 转发到多个 ECS。
+### 使用负载均衡
+适用于多实例部署场景，配置云负载均衡器转发到多个服务器。
 
-### 使用 ACK 容器服务
-参考官方文档使用阿里云 Kubernetes 服务部署。
+### 使用 Kubernetes 服务
+- 阿里云 ACK
+- 腾讯云 TKE
+- 华为云 CCE
 
 ---
 

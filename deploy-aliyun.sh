@@ -2,7 +2,8 @@
 set -e
 
 echo "========================================="
-echo "  Sonic Server 阿里云一键部署脚本"
+echo "  Sonic Server 一键部署脚本"
+echo "  支持：阿里云 / 腾讯云 / 华为云 ECS"
 echo "========================================="
 
 # 颜色定义
@@ -38,13 +39,50 @@ IMAGE_DIR="/opt/sonic-server/imageFiles"
 RECORD_DIR="/opt/sonic-server/recordFiles"
 PACKAGE_DIR="/opt/sonic-server/packageFiles"
 
+# 检测云平台
+detect_cloud() {
+    if [ -f /sys/class/dmi/id/product_version ]; then
+        PRODUCT_VERSION=$(cat /sys/class/dmi/id/product_version 2>/dev/null || echo "")
+        if [[ "$PRODUCT_VERSION" == *"TencentCloud"* ]] || [[ "$PRODUCT_VERSION" == *"CVM"* ]]; then
+            echo "tencent"
+            return
+        fi
+        if [[ "$PRODUCT_VERSION" == *"Alibaba Cloud"* ]] || [[ "$PRODUCT_VERSION" == *"ECS"* ]]; then
+            echo "aliyun"
+            return
+        fi
+    fi
+    echo "unknown"
+}
+
+CLOUD_PROVIDER=$(detect_cloud)
+log_info "检测到云服务商：$CLOUD_PROVIDER"
+
+# 根据云平台选择 Docker 镜像源
+if [ "$CLOUD_PROVIDER" == "tencent" ]; then
+    DOCKER_MIRROR="https://mirrors.tencent.com/docker-ce"
+    log_info "使用腾讯云 Docker 镜像源"
+elif [ "$CLOUD_PROVIDER" == "aliyun" ]; then
+    DOCKER_MIRROR="https://get.docker.com --mirror Aliyun"
+    log_info "使用阿里云 Docker 镜像源"
+else
+    DOCKER_MIRROR="https://get.docker.com"
+    log_info "使用官方 Docker 安装源"
+fi
+
 echo ""
-log_info "步骤 1/6: 安装 Docker..."
+log_info "步骤 1/7: 安装 Docker..."
 
 # 检查 Docker 是否已安装
 if ! command -v docker &> /dev/null; then
     log_info "正在安装 Docker..."
-    curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+    if [ "$CLOUD_PROVIDER" == "tencent" ]; then
+        # 腾讯云使用官方脚本 + 国内镜像加速
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+        sh /tmp/get-docker.sh --mirror Aliyun
+    else
+        curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+    fi
     systemctl enable docker
     systemctl start docker
     log_info "Docker 安装完成"
@@ -53,7 +91,7 @@ else
 fi
 
 echo ""
-log_info "步骤 2/6: 安装 Docker Compose..."
+log_info "步骤 2/7: 安装 Docker Compose..."
 
 # 检查 Docker Compose 是否已安装
 if ! command -v docker-compose &> /dev/null; then
@@ -67,7 +105,7 @@ else
 fi
 
 echo ""
-log_info "步骤 3/6: 创建部署目录..."
+log_info "步骤 3/7: 创建部署目录..."
 
 # 创建目录结构
 mkdir -p $DEPLOY_DIR
@@ -80,7 +118,7 @@ mkdir -p $PACKAGE_DIR
 log_info "目录创建完成：$DEPLOY_DIR"
 
 echo ""
-log_info "步骤 4/6: 生成配置文件..."
+log_info "步骤 4/7: 生成配置文件..."
 
 # 生成 .env 文件
 cat > $DEPLOY_DIR/.env << 'EOF'
@@ -129,7 +167,7 @@ log_info "配置文件已生成：$DEPLOY_DIR/.env"
 log_warn "请编辑 $DEPLOY_DIR/.env 修改数据库密码和 SECRET_KEY"
 
 echo ""
-log_info "步骤 5/6: 下载 docker-compose 配置文件..."
+log_info "步骤 5/7: 下载 docker-compose 配置文件..."
 
 # 创建 docker-compose.yml
 cat > $DEPLOY_DIR/docker-compose.yml << 'EOF'
@@ -244,7 +282,7 @@ EOF
 log_info "docker-compose.yml 创建完成"
 
 echo ""
-log_info "步骤 6/6: 拉取镜像并启动服务..."
+log_info "步骤 6/7: 拉取镜像并启动服务..."
 
 cd $DEPLOY_DIR
 
@@ -276,5 +314,11 @@ echo ""
 log_warn "重要提示："
 log_warn "1. 请确保 MySQL 数据库已创建并可访问"
 log_warn "2. 请修改 .env 中的 MYSQL_PASSWORD 和 SECRET_KEY"
-log_warn "3. 请在阿里云安全组开放端口：3000, 8761"
+log_warn "3. 请在云服务商安全组开放端口：3000, 8761"
+echo ""
+echo "腾讯云安全组配置路径:"
+echo "  控制台 > 云服务器 > 网络安全 > 安全组 > 添加入站规则"
+echo "  - 端口 3000 (Web 应用)"
+echo "  - 端口 8761 (Eureka)"
+echo "  - 端口 3306 (MySQL, 如本地运行)"
 echo ""
